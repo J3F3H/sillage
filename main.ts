@@ -60,8 +60,11 @@ function formatDuration(ms: number): string {
   return `${m}m${rem}s`;
 }
 
+type VibeAgent = "default" | "accept-edits" | "auto-approve";
+
 interface SillageSettings {
   vibePath: string;
+  agent: VibeAgent;
   maxTurns: number;
   maxPrice: number;
   timeoutSeconds: number;
@@ -69,6 +72,7 @@ interface SillageSettings {
 
 const DEFAULT_SETTINGS: SillageSettings = {
   vibePath: "vibe",
+  agent: "accept-edits",
   maxTurns: 10,
   maxPrice: 0.5,
   timeoutSeconds: 120,
@@ -76,6 +80,7 @@ const DEFAULT_SETTINGS: SillageSettings = {
 
 interface VibeRunOptions {
   maxTurnsOverride?: number;
+  onProcess?: (p: ChildProcess) => void;
 }
 
 interface DiscoveredSkill {
@@ -97,6 +102,7 @@ interface PersistedChatState {
   sessionId: string | null;
   entries: PersistedChatEntry[];
   seenMessageIds: string[];
+  previousSessionCost?: number;
 }
 
 interface PluginData {
@@ -107,6 +113,7 @@ interface PluginData {
 export default class SillagePlugin extends Plugin {
   settings: SillageSettings = DEFAULT_SETTINGS;
   lastMarkdownView: MarkdownView | null = null;
+  private activeProcesses = new Set<ChildProcess>();
   private knownSkillCommandIds = new Set<string>();
   private skillWatcher: FSWatcher | null = null;
   private rescanTimer: number | null = null;
@@ -225,6 +232,21 @@ export default class SillagePlugin extends Plugin {
       window.clearTimeout(this.rescanTimer);
       this.rescanTimer = null;
     }
+    for (const proc of this.activeProcesses) {
+      try {
+        proc.kill("SIGTERM");
+      } catch {
+        // already dead
+      }
+    }
+    this.activeProcesses.clear();
+  }
+
+  private trackProcess(proc: ChildProcess) {
+    this.activeProcesses.add(proc);
+    const cleanup = () => this.activeProcesses.delete(proc);
+    proc.on("close", cleanup);
+    proc.on("error", cleanup);
   }
 
   private async registerSkillCommands() {
@@ -361,34 +383,31 @@ export default class SillagePlugin extends Plugin {
       return;
     }
     const cwd = (this.app.vault.adapter as unknown as { basePath: string }).basePath;
-    const notice = new Notice("Sillage: extracting action items…", 0);
-    try {
-      const prompt =
-        "Extract action items from the note below as Obsidian Tasks plugin syntax.\n\n" +
-        "Rules:\n" +
-        "- Only include actionable items the reader personally owns. Skip tasks assigned to other people.\n" +
-        "- Format each item as `- [ ] <task>` on its own line.\n" +
-        "- Add `📅 YYYY-MM-DD` ONLY if the source explicitly states a date. Never invent a due date.\n" +
-        "- Add `#project/<kebab-name>` only if the project is unambiguous from the note.\n" +
-        "- Leave priority empty unless the source explicitly signals urgency (⏫ high / 🔼 medium / 🔽 low).\n" +
-        "- Output only the markdown list of tasks. No preamble, no heading, no commentary.\n" +
-        "- If there are no actionable items for the reader, output exactly: NONE\n\n" +
-        "---\n\n" +
-        noteContent;
-      const { text, durationMs } = await this.runVibe(prompt, cwd, { maxTurnsOverride: 1 });
-      const trimmed = text.trim();
-      notice.hide();
-      if (!trimmed || trimmed === "NONE") {
-        new Notice(`Sillage: no action items found (${formatDuration(durationMs)})`);
-        return;
-      }
-      const block = `\n\n## Tasks\n${trimmed}\n`;
-      editor.replaceRange(block, { line: editor.lastLine() + 1, ch: 0 });
-      new Notice(`Sillage: action items appended (${formatDuration(durationMs)})`);
-    } catch (err) {
-      notice.hide();
-      new Notice(`Sillage error: ${(err as Error).message}`);
+    const prompt =
+      "Extract action items from the note below as Obsidian Tasks plugin syntax.\n\n" +
+      "Rules:\n" +
+      "- Only include actionable items the reader personally owns. Skip tasks assigned to other people.\n" +
+      "- Format each item as `- [ ] <task>` on its own line.\n" +
+      "- Add `📅 YYYY-MM-DD` ONLY if the source explicitly states a date. Never invent a due date.\n" +
+      "- Add `#project/<kebab-name>` only if the project is unambiguous from the note.\n" +
+      "- Leave priority empty unless the source explicitly signals urgency (⏫ high / 🔼 medium / 🔽 low).\n" +
+      "- Output only the markdown list of tasks. No preamble, no heading, no commentary.\n" +
+      "- If there are no actionable items for the reader, output exactly: NONE\n\n" +
+      "---\n\n" +
+      noteContent;
+    const { result, cancelled, error } = await this.runVibeWithCancellableNotice(
+      "Sillage: extracting action items…", prompt, cwd, { maxTurnsOverride: 1 }
+    );
+    if (cancelled) { new Notice("Sillage: cancelled"); return; }
+    if (error || !result) { new Notice(`Sillage error: ${error?.message ?? "unknown"}`); return; }
+    const trimmed = result.text.trim();
+    if (!trimmed || trimmed === "NONE") {
+      new Notice(`Sillage: no action items found (${formatDuration(result.durationMs)})`);
+      return;
     }
+    const block = `\n\n## Tasks\n${trimmed}\n`;
+    editor.replaceRange(block, { line: editor.lastLine() + 1, ch: 0 });
+    new Notice(`Sillage: action items appended (${formatDuration(result.durationMs)})`);
   }
 
   private async rewriteSelection(editor: Editor) {
@@ -398,25 +417,22 @@ export default class SillagePlugin extends Plugin {
       return;
     }
     const cwd = (this.app.vault.adapter as unknown as { basePath: string }).basePath;
-    const notice = new Notice("Sillage: rewriting…", 0);
-    try {
-      const prompt =
-        "Rewrite the following text for clarity and concision. Keep the same intent, voice, and meaning. " +
-        "Output only the rewritten text, no preamble or commentary.\n\n---\n\n" +
-        selection;
-      const { text, durationMs } = await this.runVibe(prompt, cwd, { maxTurnsOverride: 1 });
-      const trimmed = text.trim();
-      notice.hide();
-      if (!trimmed) {
-        new Notice("Sillage: empty result, selection unchanged");
-        return;
-      }
-      editor.replaceSelection(trimmed);
-      new Notice(`Sillage: selection rewritten (${formatDuration(durationMs)})`);
-    } catch (err) {
-      notice.hide();
-      new Notice(`Sillage error: ${(err as Error).message}`);
+    const prompt =
+      "Rewrite the following text for clarity and concision. Keep the same intent, voice, and meaning. " +
+      "Output only the rewritten text, no preamble or commentary.\n\n---\n\n" +
+      selection;
+    const { result, cancelled, error } = await this.runVibeWithCancellableNotice(
+      "Sillage: rewriting…", prompt, cwd, { maxTurnsOverride: 1 }
+    );
+    if (cancelled) { new Notice("Sillage: cancelled"); return; }
+    if (error || !result) { new Notice(`Sillage error: ${error?.message ?? "unknown"}`); return; }
+    const trimmed = result.text.trim();
+    if (!trimmed) {
+      new Notice("Sillage: empty result, selection unchanged");
+      return;
     }
+    editor.replaceSelection(trimmed);
+    new Notice(`Sillage: selection rewritten (${formatDuration(result.durationMs)})`);
   }
 
   private async translateSelection(editor: Editor, targetLanguage: string) {
@@ -426,25 +442,54 @@ export default class SillagePlugin extends Plugin {
       return;
     }
     const cwd = (this.app.vault.adapter as unknown as { basePath: string }).basePath;
-    const notice = new Notice(`Sillage: translating to ${targetLanguage}…`, 0);
-    try {
-      const prompt =
-        `Translate the following text to ${targetLanguage}. ` +
-        "Preserve markdown formatting (links, lists, code blocks). " +
-        "Output only the translation, no preamble or commentary.\n\n---\n\n" +
-        selection;
-      const { text, durationMs } = await this.runVibe(prompt, cwd, { maxTurnsOverride: 1 });
-      const trimmed = text.trim();
-      notice.hide();
-      if (!trimmed) {
-        new Notice("Sillage: empty result, selection unchanged");
-        return;
+    const prompt =
+      `Translate the following text to ${targetLanguage}. ` +
+      "Preserve markdown formatting (links, lists, code blocks). " +
+      "Output only the translation, no preamble or commentary.\n\n---\n\n" +
+      selection;
+    const { result, cancelled, error } = await this.runVibeWithCancellableNotice(
+      `Sillage: translating to ${targetLanguage}…`, prompt, cwd, { maxTurnsOverride: 1 }
+    );
+    if (cancelled) { new Notice("Sillage: cancelled"); return; }
+    if (error || !result) { new Notice(`Sillage error: ${error?.message ?? "unknown"}`); return; }
+    const trimmed = result.text.trim();
+    if (!trimmed) {
+      new Notice("Sillage: empty result, selection unchanged");
+      return;
+    }
+    editor.replaceSelection(trimmed);
+    new Notice(`Sillage: translated to ${targetLanguage} (${formatDuration(result.durationMs)})`);
+  }
+
+  private async runVibeWithCancellableNotice(
+    noticeText: string,
+    prompt: string,
+    cwd: string,
+    opts: VibeRunOptions = {}
+  ): Promise<{ result: VibeTextResult | null; cancelled: boolean; error: Error | null }> {
+    const state = { cancelled: false, proc: null as ChildProcess | null };
+    const notice = new Notice(`${noticeText} (click to cancel)`, 0);
+    notice.noticeEl.addEventListener("click", () => {
+      if (state.proc && !state.cancelled) {
+        state.cancelled = true;
+        const proc = state.proc;
+        proc.kill("SIGTERM");
+        setTimeout(() => proc.kill("SIGKILL"), 2000);
       }
-      editor.replaceSelection(trimmed);
-      new Notice(`Sillage: translated to ${targetLanguage} (${formatDuration(durationMs)})`);
+    });
+    try {
+      const result = await this.runVibe(prompt, cwd, {
+        ...opts,
+        onProcess: (p) => {
+          state.proc = p;
+          opts.onProcess?.(p);
+        },
+      });
+      notice.hide();
+      return { result, cancelled: state.cancelled, error: null };
     } catch (err) {
       notice.hide();
-      new Notice(`Sillage error: ${(err as Error).message}`);
+      return { result: null, cancelled: state.cancelled, error: err as Error };
     }
   }
 
@@ -459,21 +504,18 @@ export default class SillagePlugin extends Plugin {
       return;
     }
     const cwd = (this.app.vault.adapter as unknown as { basePath: string }).basePath;
-    const notice = new Notice("Sillage: summarizing…", 0);
-    try {
-      const prompt =
-        "Summarize the following note in 3-5 concise bullet points. " +
-        "Output only the bullets, no preamble or trailing commentary.\n\n---\n\n" +
-        noteContent;
-      const { text, durationMs } = await this.runVibe(prompt, cwd, { maxTurnsOverride: 1 });
-      const block = `\n\n## Summary\n${text.trim()}\n`;
-      editor.replaceRange(block, { line: editor.lastLine() + 1, ch: 0 });
-      notice.hide();
-      new Notice(`Sillage: summary appended (${formatDuration(durationMs)})`);
-    } catch (err) {
-      notice.hide();
-      new Notice(`Sillage error: ${(err as Error).message}`);
-    }
+    const prompt =
+      "Summarize the following note in 3-5 concise bullet points. " +
+      "Output only the bullets, no preamble or trailing commentary.\n\n---\n\n" +
+      noteContent;
+    const { result, cancelled, error } = await this.runVibeWithCancellableNotice(
+      "Sillage: summarizing…", prompt, cwd, { maxTurnsOverride: 1 }
+    );
+    if (cancelled) { new Notice("Sillage: cancelled"); return; }
+    if (error || !result) { new Notice(`Sillage error: ${error?.message ?? "unknown"}`); return; }
+    const block = `\n\n## Summary\n${result.text.trim()}\n`;
+    editor.replaceRange(block, { line: editor.lastLine() + 1, ch: 0 });
+    new Notice(`Sillage: summary appended (${formatDuration(result.durationMs)})`);
   }
 
   private runVibe(prompt: string, cwd: string, opts: VibeRunOptions = {}): Promise<VibeTextResult> {
@@ -481,7 +523,7 @@ export default class SillagePlugin extends Plugin {
       const startedAt = Date.now();
       const maxTurns = opts.maxTurnsOverride ?? this.settings.maxTurns;
       const args = [
-        "--agent", "auto-approve",
+        "--agent", this.settings.agent,
         "--trust",
         "--prompt", prompt,
         "--max-turns", String(maxTurns),
@@ -506,6 +548,8 @@ export default class SillagePlugin extends Plugin {
         env,
         stdio: ["ignore", "pipe", "pipe"],
       });
+      this.trackProcess(proc);
+      opts.onProcess?.(proc);
       let stdout = "";
       let stderr = "";
       let settled = false;
@@ -556,7 +600,7 @@ export default class SillagePlugin extends Plugin {
       const startedAt = Date.now();
       let stopReason: string | undefined;
       let turns = 0;
-      const args: string[] = ["--agent", "auto-approve", "--trust"];
+      const args: string[] = ["--agent", this.settings.agent, "--trust"];
       if (opts.resumeSessionId) {
         args.push("--resume", opts.resumeSessionId);
       }
@@ -584,6 +628,7 @@ export default class SillagePlugin extends Plugin {
         env,
         stdio: ["ignore", "pipe", "pipe"],
       });
+      this.trackProcess(proc);
       opts.onProcess?.(proc);
 
       let stdoutBuf = "";
@@ -789,6 +834,25 @@ class SillageSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Agent")
+      .setDesc(
+        "Vibe agent. accept-edits auto-approves file edits in the vault (safe default); " +
+        "auto-approve also auto-approves bash / shell (needed for skills that commit, run scripts, etc.); " +
+        "default prompts for everything — usable but every tool call would hang in programmatic mode."
+      )
+      .addDropdown((d) =>
+        d
+          .addOption("accept-edits", "accept-edits (recommended)")
+          .addOption("auto-approve", "auto-approve (file edits + bash)")
+          .addOption("default", "default (prompts everything — not usable for chat)")
+          .setValue(this.plugin.settings.agent)
+          .onChange(async (v) => {
+            this.plugin.settings.agent = v as VibeAgent;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
       .setName("Max turns")
       .setDesc("Maximum assistant turns per command.")
       .addText((t) =>
@@ -836,6 +900,7 @@ class SillageChatView extends ItemView {
   private cancelled = false;
   private seenMessageIds = new Set<string>();
   private entries: PersistedChatEntry[] = [];
+  private previousSessionCost = 0;
   private messagesEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
@@ -903,6 +968,7 @@ class SillageChatView extends ItemView {
     this.sessionId = state.sessionId ?? null;
     this.seenMessageIds = new Set(state.seenMessageIds ?? []);
     this.entries = [...(state.entries ?? [])];
+    this.previousSessionCost = state.previousSessionCost ?? 0;
     for (const entry of this.entries) {
       if (entry.kind === "bubble") {
         this.renderBubble(entry.role, entry.content);
@@ -928,6 +994,7 @@ class SillageChatView extends ItemView {
       sessionId: this.sessionId,
       entries: this.entries,
       seenMessageIds: Array.from(this.seenMessageIds),
+      previousSessionCost: this.previousSessionCost,
     });
   }
 
@@ -946,6 +1013,7 @@ class SillageChatView extends ItemView {
     this.sessionId = null;
     this.seenMessageIds.clear();
     this.entries = [];
+    this.previousSessionCost = 0;
     this.messagesEl.empty();
     this.statusEl.setText("");
     this.setRunning(false);
@@ -1085,12 +1153,17 @@ class SillageChatView extends ItemView {
         },
       });
       if (result.sessionId) this.sessionId = result.sessionId;
+      let turnCost: number | null = null;
+      if (result.costUsd !== null) {
+        turnCost = Math.max(0, result.costUsd - this.previousSessionCost);
+        this.previousSessionCost = result.costUsd;
+      }
       const parts = [
         `${result.turns} turn${result.turns === 1 ? "" : "s"}`,
         formatDuration(result.durationMs),
       ];
-      if (result.costUsd !== null && result.costUsd > 0) {
-        parts.push(`$${result.costUsd.toFixed(4)}`);
+      if (turnCost !== null && turnCost > 0) {
+        parts.push(`$${turnCost.toFixed(4)}`);
       }
       const telemetry = parts.join(" · ");
       if (this.cancelled) {

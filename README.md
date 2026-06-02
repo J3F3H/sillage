@@ -51,9 +51,22 @@ All commands are assignable in Settings → Hotkeys.
 ## Settings
 
 - **Vibe binary path** — defaults to `vibe` (uses PATH). Set to an absolute path if Obsidian can't find it (common on macOS where `~/.local/bin` isn't on Obsidian's PATH).
+- **Agent** — which vibe agent to run with. See **Security** below. Default: `accept-edits`.
 - **Max turns** — agent loop cap per send (default 10). Note commands hard-cap to 1.
 - **Max price (USD)** — per-send cost cap (default $0.50).
 - **Timeout (seconds)** — kill the vibe subprocess if it runs longer (default 120s).
+
+## Security
+
+Sillage drives `vibe` with `--trust` (so vibe doesn't prompt to trust the vault each run) and an **Agent** setting that controls how much of vibe's tool use is auto-approved:
+
+| Agent           | Auto-approves                          | Use when                                   |
+|---              |---                                     |---                                         |
+| `accept-edits`  | File reads/writes inside the workdir   | Default. Note commands and most chat.      |
+| `auto-approve`  | All tools, **including bash / shell**  | You're running a skill you trust that needs to run scripts or `git commit` (e.g. `organize-daily` if it commits). |
+| `default`       | Nothing — every tool call prompts      | Effectively unusable in programmatic mode; included for completeness. |
+
+**Use `auto-approve` deliberately.** Every chat send and every user-invocable skill discovered under `.agents/skills/` will run with the configured agent. With `auto-approve`, vibe can execute arbitrary shell commands without confirmation — only enable it for skills you have read and trust.
 
 ## Development
 
@@ -67,6 +80,17 @@ Symlink the project dir into a test vault's `.obsidian/plugins/sillage/`. Reload
 
 DevTools (Cmd/Ctrl+Opt+I) is the debugging surface — Sillage logs subprocess lifecycle, vibe stderr, skill discovery, and watcher events with the `[sillage]` prefix.
 
+## Releases
+
+Tag-push triggers `.github/workflows/release.yml`, which builds and creates a draft GitHub release with `main.js`, `manifest.json`, and `styles.css` attached.
+
+```sh
+# bump manifest.json and package.json versions, then:
+git tag 0.2.0
+git push origin 0.2.0
+# review the draft on GitHub, edit notes, publish
+```
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
