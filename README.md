@@ -80,6 +80,33 @@ If you keep secrets in your vault (credentials, private journals), be deliberate
 
 Session metadata and full transcripts are also written locally to `$VIBE_HOME/logs/session/` by vibe itself (defaults to `~/.vibe/logs/session/`). Sillage reads from this directory to capture `session_id` and cost; it does not write there.
 
+## How Sillage runs vibe
+
+Sillage invokes `vibe` via Node's `child_process.spawn`. The argv is deterministic and never includes shell metacharacters from note content — the prompt is passed as a single `--prompt` argument, not through a shell.
+
+**Flags always passed:**
+- `--agent <setting value>` — see [Security](#security).
+- `--trust` — skips vibe's per-invocation "trust this folder?" prompt. The vault is implicitly trusted by being open in Obsidian.
+- `--max-turns N`, `--max-price $D` — agent loop and cost caps from settings.
+- `--output text` for one-shot note commands; `--output streaming` (NDJSON, one JSON message per line) for chat.
+- `--prompt "<text>"` — the prompt body, including your note or selection content.
+- `--resume <session_id>` for chat continuation when a prior session is still on disk; absent on the first turn or when the prior session has aged out.
+
+**Subprocess behavior:**
+- `cwd` is the vault root, so vibe's file tools resolve to vault paths.
+- `stdio: ["ignore", "pipe", "pipe"]` — stdin is closed (vibe hangs indefinitely if left open in `--prompt` mode).
+- `env` inherits the user's environment, with `PATH` augmented to include `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin` so a bare `vibe` resolves on macOS even when Obsidian launches without a login-shell PATH.
+- Every spawned process is tracked; `onunload` sends `SIGTERM` to any still running, then `SIGKILL` 2 seconds later.
+- A per-send timeout (configurable, default 120s) kills the process if it doesn't exit on its own.
+
+**What Sillage does NOT do:**
+- No network connections of its own. All network traffic originates from `vibe`.
+- No telemetry collection or reporting.
+- No writes to `$VIBE_HOME` or vibe's config. It only reads `$VIBE_HOME/logs/session/*/meta.json` for `session_id` and cost.
+- No auto-update. Releases are tag-driven (see [Releases](#releases)).
+
+If `vibe` is missing (`ENOENT`), the user gets a Notice naming the configured path and pointing to settings. Non-zero exits with an unrecognized stop event surface as error bubbles in chat or error notices for note commands.
+
 ## Development
 
 ```sh
