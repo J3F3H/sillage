@@ -36,17 +36,17 @@ Then in Obsidian: Settings → Community plugins → enable **Sillage**.
 
 ## Commands
 
-| Command                              | Default hotkey  | Notes                            |
-|---                                   |---              |---                               |
-| Open chat                            | Mod+Shift+L     | Opens the sidebar panel          |
-| Summarize current note               | —               | Appends `## Summary`             |
-| Extract action items from current note | —             | Appends `## Tasks` in Tasks-plugin syntax |
-| Rewrite selection for clarity        | —               | Replaces selection               |
-| Translate selection to English       | —               |                                  |
-| Translate selection to French        | —               |                                  |
-| _Skill-discovered commands_          | —               | One per `.agents/skills/*/SKILL.md` with `user-invocable: true` |
+| Command                                | Notes                                                      |
+|---                                     |---                                                         |
+| Open chat                              | Opens the sidebar panel                                    |
+| Summarize current note                 | Appends `## Summary`                                       |
+| Extract action items from current note | Appends `## Tasks` in Tasks-plugin syntax                  |
+| Rewrite selection for clarity          | Replaces selection                                         |
+| Translate selection to English         |                                                            |
+| Translate selection to French          |                                                            |
+| _Skill-discovered commands_            | One per `.agents/skills/*/SKILL.md` with `user-invocable: true` |
 
-All commands are assignable in Settings → Hotkeys.
+Sillage ships with no default hotkeys to avoid conflicts. Assign keys in Settings → Hotkeys.
 
 ## Settings
 
@@ -55,6 +55,7 @@ All commands are assignable in Settings → Hotkeys.
 - **Max turns** — agent loop cap per send (default 10). Note commands hard-cap to 1.
 - **Max price (USD)** — per-send cost cap (default $0.50).
 - **Timeout (seconds)** — kill the vibe subprocess if it runs longer (default 120s).
+- **Debug logging** — when on, prints subprocess lifecycle, vibe stderr, skill discovery, and watcher events to the DevTools console with the `[sillage]` prefix. Off by default.
 
 ## Security
 

@@ -68,6 +68,7 @@ interface SillageSettings {
   maxTurns: number;
   maxPrice: number;
   timeoutSeconds: number;
+  debug: boolean;
 }
 
 const DEFAULT_SETTINGS: SillageSettings = {
@@ -76,6 +77,7 @@ const DEFAULT_SETTINGS: SillageSettings = {
   maxTurns: 10,
   maxPrice: 0.5,
   timeoutSeconds: 120,
+  debug: false,
 };
 
 interface VibeRunOptions {
@@ -128,7 +130,6 @@ export default class SillagePlugin extends Plugin {
     this.addCommand({
       id: "open-sillage-chat",
       name: "Open chat",
-      hotkeys: [{ modifiers: ["Mod", "Shift"], key: "L" }],
       callback: () => this.activateChatView(),
     });
 
@@ -242,6 +243,10 @@ export default class SillagePlugin extends Plugin {
     this.activeProcesses.clear();
   }
 
+  dlog(...args: unknown[]) {
+    if (this.settings.debug) console.log(...args);
+  }
+
   private trackProcess(proc: ChildProcess) {
     this.activeProcesses.add(proc);
     const cleanup = () => this.activeProcesses.delete(proc);
@@ -258,7 +263,7 @@ export default class SillagePlugin extends Plugin {
     }
     this.knownSkillCommandIds = newIds;
 
-    console.log(
+    this.dlog(
       `[sillage] registered ${skills.length} user-invocable skills:`,
       skills.map((s) => s.name)
     );
@@ -297,7 +302,7 @@ export default class SillagePlugin extends Plugin {
       this.skillWatcher.on("error", (err) => {
         console.warn("[sillage] skill watcher error:", err);
       });
-      console.log(`[sillage] watching ${skillsDir} for skill changes`);
+      this.dlog(`[sillage] watching ${skillsDir} for skill changes`);
     } catch (err) {
       console.warn(
         `[sillage] could not watch ${skillsDir} (does it exist?):`,
@@ -310,7 +315,7 @@ export default class SillagePlugin extends Plugin {
     if (this.rescanTimer !== null) window.clearTimeout(this.rescanTimer);
     this.rescanTimer = window.setTimeout(() => {
       this.rescanTimer = null;
-      console.log("[sillage] rescanning skills…");
+      this.dlog("[sillage] rescanning skills…");
       this.registerSkillCommands().catch((err) =>
         console.warn("[sillage] rescan failed:", err)
       );
@@ -539,7 +544,7 @@ export default class SillagePlugin extends Plugin {
         ...process.env,
         PATH: [process.env.PATH, ...extraPaths].filter(Boolean).join(":"),
       };
-      console.log(
+      this.dlog(
         `[sillage] spawning vibe path=${this.settings.vibePath} ` +
         `max-turns=${maxTurns} prompt-bytes=${prompt.length} cwd=${cwd}`
       );
@@ -557,7 +562,7 @@ export default class SillagePlugin extends Plugin {
       proc.stderr.on("data", (d) => {
         const chunk = d.toString();
         stderr += chunk;
-        console.log("[sillage] vibe stderr:", chunk.trimEnd());
+        this.dlog("[sillage] vibe stderr:", chunk.trimEnd());
       });
       const timer = setTimeout(() => {
         if (settled) return;
@@ -585,7 +590,7 @@ export default class SillagePlugin extends Plugin {
         settled = true;
         clearTimeout(timer);
         const durationMs = Date.now() - startedAt;
-        console.log(`[sillage] vibe exited code=${code}, stdout=${stdout.length}b, ${durationMs}ms`);
+        this.dlog(`[sillage] vibe exited code=${code}, stdout=${stdout.length}b, ${durationMs}ms`);
         if (code !== 0) {
           reject(new Error(`vibe exited ${code}: ${stderr.slice(0, 300).trim()}`));
           return;
@@ -619,7 +624,7 @@ export default class SillagePlugin extends Plugin {
         ...process.env,
         PATH: [process.env.PATH, ...extraPaths].filter(Boolean).join(":"),
       };
-      console.log(
+      this.dlog(
         `[sillage] streaming vibe path=${this.settings.vibePath} ` +
         `resume=${opts.resumeSessionId ?? "none"} prompt-bytes=${prompt.length} cwd=${cwd}`
       );
@@ -661,7 +666,7 @@ export default class SillagePlugin extends Plugin {
         stderr += chunk;
         const m = chunk.match(VIBE_STOP_EVENT_RE);
         if (m) stopReason = m[1];
-        console.log("[sillage] vibe stderr:", chunk.trimEnd());
+        this.dlog("[sillage] vibe stderr:", chunk.trimEnd());
       });
 
       const timer = setTimeout(() => {
@@ -689,7 +694,7 @@ export default class SillagePlugin extends Plugin {
       proc.on("close", (code) => {
         settle(() => {
           const durationMs = Date.now() - startedAt;
-          console.log(
+          this.dlog(
             `[sillage] vibe stream exited code=${code} turns=${turns} ` +
             `${durationMs}ms stopReason=${stopReason ?? "none"}`
           );
@@ -898,6 +903,18 @@ class SillageSettingTab extends PluginSettingTab {
           }
         })
       );
+
+    new Setting(containerEl)
+      .setName("Debug logging")
+      .setDesc(
+        "Log subprocess lifecycle, vibe stderr, skill discovery, and watcher events to the DevTools console with the [sillage] prefix. Off in shipping builds."
+      )
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.debug).onChange(async (v) => {
+          this.plugin.settings.debug = v;
+          await this.plugin.saveSettings();
+        })
+      );
   }
 }
 
@@ -989,7 +1006,7 @@ class SillageChatView extends ItemView {
       if (exists) {
         this.statusEl.setText(`Resumed session ${this.sessionId.slice(0, 8)}…`);
       } else {
-        console.log(`[sillage] persisted session ${this.sessionId} aged out`);
+        this.plugin.dlog(`[sillage] persisted session ${this.sessionId} aged out`);
         this.sessionId = null;
         this.persistState();
         this.statusEl.setText("Previous session aged out — next send will start fresh.");
@@ -1137,7 +1154,7 @@ class SillageChatView extends ItemView {
     const cwd = (this.plugin.app.vault.adapter as unknown as { basePath: string }).basePath;
     let resumeId = this.sessionId ?? undefined;
     if (resumeId && !(await this.plugin.sessionExists(resumeId))) {
-      console.log(`[sillage] session ${resumeId} aged out — starting fresh`);
+      this.plugin.dlog(`[sillage] session ${resumeId} aged out — starting fresh`);
       new Notice("Sillage: previous session aged out, starting fresh (vibe loses prior context)");
       this.sessionId = null;
       this.persistState();
