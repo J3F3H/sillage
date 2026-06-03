@@ -717,8 +717,16 @@ export default class SillagePlugin extends Plugin {
 
   private cachedData: PluginData = {};
 
+  private vibeHomeDir(): string {
+    return process.env.VIBE_HOME || pathJoin(homedir(), ".vibe");
+  }
+
+  private vibeSessionsDir(): string {
+    return pathJoin(this.vibeHomeDir(), "logs", "session");
+  }
+
   async sessionExists(sessionId: string): Promise<boolean> {
-    const sessionsDir = pathJoin(homedir(), ".vibe", "logs", "session");
+    const sessionsDir = this.vibeSessionsDir();
     const shortId = sessionId.split("-")[0];
     try {
       const entries = await fsp.readdir(sessionsDir);
@@ -740,7 +748,7 @@ export default class SillagePlugin extends Plugin {
   }
 
   async findRecentSessionForCwd(cwd: string, sinceMs: number): Promise<SessionInfo | null> {
-    const sessionsDir = pathJoin(homedir(), ".vibe", "logs", "session");
+    const sessionsDir = this.vibeSessionsDir();
     try {
       const entries = await fsp.readdir(sessionsDir);
       const candidates: { dir: string; mtimeMs: number }[] = [];
