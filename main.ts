@@ -479,7 +479,7 @@ export default class SillagePlugin extends Plugin {
         state.cancelled = true;
         const proc = state.proc;
         proc.kill("SIGTERM");
-        setTimeout(() => proc.kill("SIGKILL"), 2000);
+        window.setTimeout(() => proc.kill("SIGKILL"), 2000);
       }
     });
     try {
@@ -564,18 +564,18 @@ export default class SillagePlugin extends Plugin {
         stderr += chunk;
         this.dlog("[sillage] vibe stderr:", chunk.trimEnd());
       });
-      const timer = setTimeout(() => {
+      const timer = window.setTimeout(() => {
         if (settled) return;
         settled = true;
         console.warn(`[sillage] vibe timeout after ${this.settings.timeoutSeconds}s — killing`);
         proc.kill("SIGTERM");
-        setTimeout(() => proc.kill("SIGKILL"), 2000);
+        window.setTimeout(() => proc.kill("SIGKILL"), 2000);
         reject(new Error(`vibe timed out after ${this.settings.timeoutSeconds}s`));
       }, this.settings.timeoutSeconds * 1000);
       proc.on("error", (err: NodeJS.ErrnoException) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        window.clearTimeout(timer);
         if (err.code === "ENOENT") {
           reject(new Error(
             `vibe binary not found (tried "${this.settings.vibePath}"). ` +
@@ -588,7 +588,7 @@ export default class SillagePlugin extends Plugin {
       proc.on("close", (code) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        window.clearTimeout(timer);
         const durationMs = Date.now() - startedAt;
         this.dlog(`[sillage] vibe exited code=${code}, stdout=${stdout.length}b, ${durationMs}ms`);
         if (code !== 0) {
@@ -642,7 +642,7 @@ export default class SillagePlugin extends Plugin {
       const settle = (fn: () => void) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        window.clearTimeout(timer);
         fn();
       };
 
@@ -669,11 +669,11 @@ export default class SillagePlugin extends Plugin {
         this.dlog("[sillage] vibe stderr:", chunk.trimEnd());
       });
 
-      const timer = setTimeout(() => {
+      const timer = window.setTimeout(() => {
         settle(() => {
           console.warn(`[sillage] vibe stream timeout after ${this.settings.timeoutSeconds}s`);
           proc.kill("SIGTERM");
-          setTimeout(() => proc.kill("SIGKILL"), 2000);
+          window.setTimeout(() => proc.kill("SIGKILL"), 2000);
           reject(new Error(`vibe timed out after ${this.settings.timeoutSeconds}s`));
         });
       }, this.settings.timeoutSeconds * 1000);
@@ -1220,7 +1220,7 @@ class SillageChatView extends ItemView {
     this.statusEl.setText("Cancelling…");
     this.currentProc.kill("SIGTERM");
     const proc = this.currentProc;
-    setTimeout(() => proc.kill("SIGKILL"), 2000);
+    window.setTimeout(() => proc.kill("SIGKILL"), 2000);
   }
 
   private setRunning(running: boolean) {
