@@ -474,7 +474,7 @@ export default class SillagePlugin extends Plugin {
   ): Promise<{ result: VibeTextResult | null; cancelled: boolean; error: Error | null }> {
     const state = { cancelled: false, proc: null as ChildProcess | null };
     const notice = new Notice(`${noticeText} (click to cancel)`, 0);
-    notice.noticeEl.addEventListener("click", () => {
+    notice.messageEl.addEventListener("click", () => {
       if (state.proc && !state.cancelled) {
         state.cancelled = true;
         const proc = state.proc;
