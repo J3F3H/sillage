@@ -974,13 +974,13 @@ class SillageChatView extends ItemView {
     });
     this.sendBtn.addEventListener("click", () => {
       if (this.currentProc) this.cancel();
-      else this.send();
+      else void this.send();
     });
 
     this.inputEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        this.send();
+        void this.send();
       }
     });
 
@@ -1060,14 +1060,16 @@ class SillageChatView extends ItemView {
     el.createDiv({ cls: "sillage-msg-role", text: role });
     const body = el.createDiv({ cls: "sillage-msg-body" });
     if (role === "assistant") {
-      MarkdownRenderer.render(this.plugin.app, content, body, "", this);
+      void MarkdownRenderer.render(this.plugin.app, content, body, "", this);
       const footer = el.createDiv({ cls: "sillage-msg-footer" });
       const insertBtn = footer.createEl("button", { text: "Insert", cls: "sillage-insert-btn" });
       insertBtn.addEventListener("click", () => this.insertIntoActiveNote(content));
       const copyBtn = footer.createEl("button", { text: "Copy", cls: "sillage-copy-btn" });
-      copyBtn.addEventListener("click", async () => {
-        await navigator.clipboard.writeText(content);
-        new Notice("Sillage: copied");
+      copyBtn.addEventListener("click", () => {
+        navigator.clipboard.writeText(content).then(
+          () => new Notice("Sillage: copied"),
+          (err: unknown) => new Notice(`Sillage: copy failed (${(err as Error).message})`)
+        );
       });
     } else {
       body.setText(content);
