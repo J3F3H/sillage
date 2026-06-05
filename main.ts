@@ -1,5 +1,5 @@
 import { ChildProcess, spawn } from "child_process";
-import { promises as fsp, FSWatcher, watch as fsWatch } from "fs";
+import { promises as fsp } from "fs";
 import { homedir } from "os";
 import { join as pathJoin } from "path";
 import {
@@ -15,8 +15,11 @@ import {
   Plugin,
   PluginSettingTab,
   Setting,
+  TAbstractFile,
   WorkspaceLeaf,
 } from "obsidian";
+
+const SKILLS_DIR_PREFIX = ".agents/skills/";
 
 export const VIEW_TYPE_SILLAGE_CHAT = "sillage-chat-view";
 
@@ -124,7 +127,6 @@ export default class SillagePlugin extends Plugin {
   lastMarkdownView: MarkdownView | null = null;
   private activeProcesses = new Set<ChildProcess>();
   private knownSkillCommandIds = new Set<string>();
-  private skillWatcher: FSWatcher | null = null;
   private rescanTimer: number | null = null;
 
   async onload() {
@@ -170,6 +172,16 @@ export default class SillagePlugin extends Plugin {
       editorCallback: (editor) => this.translateSelection(editor, "French"),
     });
 
+    this.addCommand({
+      id: "reload-skills",
+      name: "Reload skills",
+      callback: () => {
+        void this.registerSkillCommands().then(() => {
+          new Notice("Sillage: skills reloaded");
+        });
+      },
+    });
+
     this.addSettingTab(new SillageSettingTab(this.app, this));
 
     this.registerEvent(
@@ -189,6 +201,10 @@ export default class SillagePlugin extends Plugin {
 
     await this.registerSkillCommands();
     this.startSkillWatcher();
+  }
+
+  private isSkillPath(path: string): boolean {
+    return path.startsWith(SKILLS_DIR_PREFIX);
   }
 
   private addEditorMenuItems(menu: Menu, editor: Editor, view: MarkdownView | MarkdownFileInfo) {
@@ -232,10 +248,6 @@ export default class SillagePlugin extends Plugin {
   }
 
   onunload() {
-    if (this.skillWatcher) {
-      this.skillWatcher.close();
-      this.skillWatcher = null;
-    }
     if (this.rescanTimer !== null) {
       window.clearTimeout(this.rescanTimer);
       this.rescanTimer = null;
@@ -299,23 +311,25 @@ export default class SillagePlugin extends Plugin {
     }
   }
 
+  /// Subscribe to Obsidian's vault events for changes under .agents/skills.
+  /// Vault events fire reliably for files Obsidian's indexer tracks; a dotfolder
+  /// like .agents/ may or may not be indexed depending on the vault config, so
+  /// the "Reload skills" command exists as an explicit fallback.
   private startSkillWatcher() {
-    const base = (this.app.vault.adapter as unknown as { basePath: string }).basePath;
-    const skillsDir = `${base}/.agents/skills`;
-    try {
-      this.skillWatcher = fsWatch(skillsDir, { recursive: true }, () =>
-        this.scheduleSkillRescan()
-      );
-      this.skillWatcher.on("error", (err) => {
-        console.warn("[sillage] skill watcher error:", err);
-      });
-      this.dlog(`[sillage] watching ${skillsDir} for skill changes`);
-    } catch (err) {
-      console.warn(
-        `[sillage] could not watch ${skillsDir} (does it exist?):`,
-        (err as Error).message
-      );
-    }
+    const onChange = (file: TAbstractFile) => {
+      if (this.isSkillPath(file.path)) this.scheduleSkillRescan();
+    };
+    this.registerEvent(this.app.vault.on("create", onChange));
+    this.registerEvent(this.app.vault.on("modify", onChange));
+    this.registerEvent(this.app.vault.on("delete", onChange));
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        if (this.isSkillPath(file.path) || this.isSkillPath(oldPath)) {
+          this.scheduleSkillRescan();
+        }
+      })
+    );
+    this.dlog("[sillage] subscribed to vault events for .agents/skills changes");
   }
 
   private scheduleSkillRescan() {
