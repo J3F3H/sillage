@@ -128,7 +128,7 @@ export default class SillagePlugin extends Plugin {
     this.addRibbonIcon("wind", "Open Sillage chat", () => this.activateChatView());
 
     this.addCommand({
-      id: "open-sillage-chat",
+      id: "open-chat",
       name: "Open chat",
       callback: () => this.activateChatView(),
     });
