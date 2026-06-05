@@ -1060,7 +1060,7 @@ class SillageChatView extends ItemView {
     el.createDiv({ cls: "sillage-msg-role", text: role });
     const body = el.createDiv({ cls: "sillage-msg-body" });
     if (role === "assistant") {
-      MarkdownRenderer.render(this.plugin.app, content, body, "", this.plugin);
+      MarkdownRenderer.render(this.plugin.app, content, body, "", this);
       const footer = el.createDiv({ cls: "sillage-msg-footer" });
       const insertBtn = footer.createEl("button", { text: "Insert", cls: "sillage-insert-btn" });
       insertBtn.addEventListener("click", () => this.insertIntoActiveNote(content));
