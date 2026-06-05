@@ -853,7 +853,6 @@ class SillageSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new Setting(containerEl).setName("Sillage settings").setHeading();
 
     new Setting(containerEl)
       .setName("Vibe binary path")
