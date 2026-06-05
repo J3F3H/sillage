@@ -831,7 +831,7 @@ class SillageSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Sillage settings" });
+    new Setting(containerEl).setName("Sillage settings").setHeading();
 
     new Setting(containerEl)
       .setName("Vibe binary path")
