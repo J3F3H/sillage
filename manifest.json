@@ -2,7 +2,7 @@
   "id": "sillage",
   "name": "Sillage",
   "version": "0.2.0",
-  "minAppVersion": "1.5.0",
+  "minAppVersion": "1.7.2",
   "description": "Mistral Vibe integration: chat and predefined tasks for your vault.",
   "author": "hansenje",
   "authorUrl": "",

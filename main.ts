@@ -372,7 +372,7 @@ export default class SillagePlugin extends Plugin {
       leaf = right;
       await leaf.setViewState({ type: VIEW_TYPE_SILLAGE_CHAT, active: true });
     }
-    workspace.revealLeaf(leaf);
+    await workspace.revealLeaf(leaf);
     const view = leaf.view;
     return view instanceof SillageChatView ? view : null;
   }
