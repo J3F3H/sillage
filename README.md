@@ -29,7 +29,7 @@ Then in Obsidian: Settings → Community plugins → enable **Sillage**.
 
 - **Chat panel** — sidebar view that streams `vibe --output streaming` responses. Markdown-rendered, with tool-call visibility, Insert/Copy on each assistant bubble, and a Stop button to cancel runs.
 - **Note commands** — Summarize, Extract action items (Obsidian Tasks plugin syntax), Rewrite selection, Translate selection (EN/FR).
-- **Skill auto-discovery** — any `user-invocable: true` skill under `<vault>/.agents/skills/` is registered as a command. An `fs.watch` re-scans automatically when you add, edit, or remove skills.
+- **Skill auto-discovery** — any `user-invocable: true` skill under `<vault>/.agents/skills/` is registered as a command. Obsidian vault events trigger a rescan when you add, edit, or remove skills; run **Reload skills** from the command palette if your vault doesn't index `.agents/`.
 - **Persisted chat + safe session resume** — chat history and `session_id` survive Obsidian reloads. Subsequent turns use `vibe --resume <id>` so a terminal session can't accidentally collide. If a session is aged out of `~/.vibe/logs/session/`, Sillage falls back to a fresh session and tells you.
 - **Cost / turn / duration telemetry** — pulled from vibe's per-session `meta.json`, shown in the chat status line after each turn.
 - **Editor context menu** — right-click in any note for inline Sillage commands.
@@ -44,6 +44,7 @@ Then in Obsidian: Settings → Community plugins → enable **Sillage**.
 | Rewrite selection for clarity          | Replaces selection                                         |
 | Translate selection to English         |                                                            |
 | Translate selection to French          |                                                            |
+| Reload skills                          | Force a rescan of `.agents/skills/` (fallback if vault events don't fire)  |
 | _Skill-discovered commands_            | One per `.agents/skills/*/SKILL.md` with `user-invocable: true` |
 
 Sillage ships with no default hotkeys to avoid conflicts. Assign keys in Settings → Hotkeys.
@@ -68,6 +69,16 @@ Sillage drives `vibe` with `--trust` (so vibe doesn't prompt to trust the vault 
 | `default`       | Nothing — every tool call prompts      | Effectively unusable in programmatic mode; included for completeness. |
 
 **Use `auto-approve` deliberately.** Every chat send and every user-invocable skill discovered under `.agents/skills/` will run with the configured agent. With `auto-approve`, vibe can execute arbitrary shell commands without confirmation — only enable it for skills you have read and trust.
+
+## Host access (Obsidian review disclosures)
+
+Sillage's integration with the `vibe` CLI requires capabilities beyond the standard Obsidian plugin sandbox. The full list:
+
+- **Shell execution (`child_process.spawn`).** Sillage spawns the user-configured `vibe` binary as a subprocess. The argv is built from settings and the user's prompt; the prompt is passed as a single `--prompt` argument and is never interpolated into a shell command line. See [How Sillage runs vibe](#how-sillage-runs-vibe) for the exact arguments and environment. No other binary is ever launched.
+- **Filesystem access outside the vault (`fs.promises`).** Sillage reads (never writes) `$VIBE_HOME/logs/session/*/meta.json` — defaults to `~/.vibe/logs/session/` — to recover the most recent `session_id` and per-session cost after a chat send. This is the only filesystem path outside the vault that Sillage touches. All in-vault file access goes through the Obsidian vault API.
+- **Clipboard write (`navigator.clipboard.writeText`).** The "Copy" button on each assistant chat bubble writes that bubble's text to the system clipboard. It only fires from an explicit user click and only copies content already visible in the chat panel.
+
+Sillage does not open network connections, install or update binaries, modify host configuration, or read the clipboard.
 
 ## Privacy / data flow
 
@@ -123,7 +134,7 @@ DevTools (Cmd/Ctrl+Opt+I) is the debugging surface — Sillage logs subprocess l
 ## Known limitations
 
 - **Desktop only.** Plugin spawns a subprocess; Obsidian mobile doesn't allow that.
-- **Skill hot-reload requires macOS or Windows.** The `fs.watch({ recursive: true })` API isn't supported on Linux, so the auto-rescan won't fire there. Linux users: reload Sillage after editing `.agents/skills/*/SKILL.md` to pick up changes.
+- **Skill hot-reload depends on Obsidian indexing `.agents/`.** Some vault configurations skip dotfolders, in which case vault events won't fire for `.agents/skills/*/SKILL.md`. Run **Reload skills** from the command palette after editing skills to force a rescan.
 - **`session_id` is captured by scanning `$VIBE_HOME/logs/session/`.** If a session ages out of that directory between runs, Sillage falls back to a fresh `vibe` session (your visible chat history is preserved, but vibe loses its memory of the prior turns).
 - **Cost telemetry is per-turn, computed as a delta** from vibe's cumulative `session_cost`. If you mix `vibe --resume` from a terminal with the chat panel, the delta can briefly look wrong on the next turn.
 
