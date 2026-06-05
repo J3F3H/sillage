@@ -96,6 +96,13 @@ interface SessionInfo {
   totalMessages: number;
 }
 
+interface VibeSessionMeta {
+  session_id?: string;
+  total_messages?: number;
+  environment?: { working_directory?: string };
+  stats?: { session_cost?: number };
+}
+
 type PersistedChatEntry =
   | { kind: "bubble"; role: "user" | "assistant" | "error"; content: string; messageId?: string }
   | { kind: "tool"; label: string };
@@ -558,8 +565,8 @@ export default class SillagePlugin extends Plugin {
       let stdout = "";
       let stderr = "";
       let settled = false;
-      proc.stdout.on("data", (d) => (stdout += d.toString()));
-      proc.stderr.on("data", (d) => {
+      proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
+      proc.stderr?.on("data", (d: Buffer) => {
         const chunk = d.toString();
         stderr += chunk;
         this.dlog("[sillage] vibe stderr:", chunk.trimEnd());
@@ -646,7 +653,7 @@ export default class SillagePlugin extends Plugin {
         fn();
       };
 
-      proc.stdout!.on("data", (d) => {
+      proc.stdout?.on("data", (d: Buffer) => {
         stdoutBuf += d.toString();
         const lines = stdoutBuf.split("\n");
         stdoutBuf = lines.pop() ?? "";
@@ -661,7 +668,7 @@ export default class SillagePlugin extends Plugin {
           }
         }
       });
-      proc.stderr!.on("data", (d) => {
+      proc.stderr?.on("data", (d: Buffer) => {
         const chunk = d.toString();
         stderr += chunk;
         const m = chunk.match(VIBE_STOP_EVENT_RE);
@@ -740,7 +747,7 @@ export default class SillagePlugin extends Plugin {
         if (!name.endsWith(`_${shortId}`)) continue;
         try {
           const raw = await fsp.readFile(pathJoin(sessionsDir, name, "meta.json"), "utf-8");
-          const meta = JSON.parse(raw);
+          const meta = JSON.parse(raw) as VibeSessionMeta | null;
           if (meta?.session_id === sessionId) return true;
         } catch {
           // unreadable meta, treat as not-this-one
@@ -772,10 +779,11 @@ export default class SillagePlugin extends Plugin {
       for (const c of candidates) {
         try {
           const raw = await fsp.readFile(pathJoin(c.dir, "meta.json"), "utf-8");
-          const meta = JSON.parse(raw);
+          const meta = JSON.parse(raw) as VibeSessionMeta | null;
           if (meta?.environment?.working_directory !== cwd) continue;
+          if (!meta.session_id) continue;
           return {
-            sessionId: String(meta.session_id),
+            sessionId: meta.session_id,
             costUsd: Number(meta.stats?.session_cost ?? 0),
             totalMessages: Number(meta.total_messages ?? 0),
           };
@@ -1107,11 +1115,12 @@ class SillageChatView extends ItemView {
     let argStr = "";
     try {
       const raw = fn?.arguments;
-      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      const parsed: unknown = typeof raw === "string" ? JSON.parse(raw) : raw;
       if (parsed && typeof parsed === "object") {
-        const keys = Object.keys(parsed);
+        const obj = parsed as Record<string, unknown>;
+        const keys = Object.keys(obj);
         if (keys.length) {
-          const first = (parsed as Record<string, unknown>)[keys[0]];
+          const first = obj[keys[0]];
           argStr =
             typeof first === "string"
               ? ` ${first}`
